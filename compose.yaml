@@ -1,0 +1,7 @@
+services:
+  app:
+    build: .
+    ports: ["127.0.0.1:8084:8000"]
+    volumes: ["./data:/app/data"]
+    env_file: .env
+    restart: unless-stopped

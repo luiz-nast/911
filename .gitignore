@@ -1,0 +1,5 @@
+.env
+__pycache__/
+.venv/
+# vídeos e documentos não vão pro git
+data/
