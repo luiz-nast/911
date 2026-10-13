@@ -79,6 +79,7 @@ Nome repetido não sobrescreve: `foto.jpg` vira `foto (2).jpg`. A data original 
 Pré-requisitos no servidor: Docker com o plugin compose e o Caddy rodando no host como reverse proxy.
 
 ```bash
+git clone https://github.com/luiz-nast/911.git /root/opala/project/911
 cd /root/opala/project/911
 cp .env.example .env        # defina PASSWORD e um SECRET aleatório
 docker compose up -d --build
