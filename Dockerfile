@@ -1,4 +1,6 @@
 FROM ghcr.io/astral-sh/uv:python3.13-alpine
+# ffmpeg junta o vídeo e o áudio que o YouTube manda separados; o deno resolve o desafio de JS do YouTube
+RUN apk add --no-cache ffmpeg deno
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen
