@@ -75,8 +75,8 @@ Os downloads rodam um de cada vez (o servidor tem 1 vCPU), com limite de 2 GB e 
 │   ├── app.js          # abas, feed, upload, visualizador, lixeira
 │   ├── editor.js       # editor de PDF (carregado só quando abre um PDF)
 │   ├── login.html
-│   ├── fonts/          # Archivo e JetBrains Mono (as do design), servidas daqui
-│   └── vendor/         # PDF.js 6.4 (build "legacy", roda em iPhone mais antigo) e pdf-lib 1.17
+│   ├── fonts/          # Archivo e JetBrains Mono (as do design, licença OFL), servidas daqui
+│   └── vendor/         # PDF.js 6.4 (Apache-2.0, build "legacy", roda em iPhone mais antigo) e pdf-lib 1.17 (MIT)
 ├── data/               # os arquivos (volume, FORA do git)
 │   ├── Energy/         # cada item baixado por link tem um ".<nome>.json" escondido com a origem
 │   ├── Documents/
@@ -88,6 +88,7 @@ Os downloads rodam um de cada vez (o servidor tem 1 vCPU), com limite de 2 GB e 
 └── .env                # senha e segredo (fora do git; ver .env.example)
 ```
 
+- **Código público, arquivos não:** este repositório só tem o código. Vídeos e documentos ficam em `data/`, no servidor, que está no `.gitignore` e só abre com a senha.
 - **Sem banco:** o sistema de arquivos é o banco. Dá pra mexer em `data/` direto pelo terminal que o app enxerga.
 - **Nada carregado de fora:** fontes, PDF.js e pdf-lib são servidos pelo próprio 911.
 - **Envio em streaming:** o corpo do `PUT` vai direto pro disco (num `.part` escondido, renomeado no fim). Os arquivos sobem um de cada vez, com barra de progresso.
