@@ -51,6 +51,7 @@
     <button class="ib" id="vclose" aria-label="Back"></button>
     <div class="vtitle"><div id="vname"></div><div id="vmeta"></div></div>
     <a class="ib" id="vdl" aria-label="Download" title="Download"></a>
+    <button class="ib" id="vlab" aria-label="Label" title="Label (shown instead of the file name)"></button>
     <button class="ib" id="vren" aria-label="Rename" title="Rename"></button>
     <button class="ib" id="vdel" aria-label="Delete" title="Delete"></button>
   </div>
@@ -70,6 +71,8 @@
     <div class="drow"><button class="ghost" value="">Cancel</button><button class="go" id="dOk" value="ok"></button></div>
   </form>
 </dialog>
+<div id="selbar" role="toolbar" aria-label="Selected files" hidden></div>
+<div id="menu" role="menu" hidden></div>
 <div id="toast" role="status"></div>
 <div id="uploads" hidden></div>
 <div id="drop"><div>Drop to add to <span id="dropTo"></span></div></div>

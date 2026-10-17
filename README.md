@@ -23,11 +23,41 @@ App web de **um usuário só**, protegido por senha, seguindo o design do canvas
 | Aba | O que faz |
 |---|---|
 | **Energy** | feed com o mais recente em cima. O vídeo toca ali mesmo no feed. O **+** salva por **link do Pinterest** (foto ou vídeo), **link do YouTube Shorts** ou **arquivo do aparelho**. Colou o link, ele escolhe a opção sozinho |
-| **Documents** | lista em ordem alfabética (no computador, cartões). O **+** envia o arquivo direto, com o nome original. PDF abre no **editor** |
+| **Documents** | organizado em **estantes** (abaixo). O **+** envia o arquivo direto, com o nome original, pra estante que você escolher. PDF abre no **editor** |
 
-Em qualquer arquivo dá pra baixar, renomear e apagar. O que você apaga vai pra **lixeira** (link no rodapé), com *Undo* na hora e *Restore* depois.
+Em qualquer arquivo dá pra baixar, renomear, pôr um **rótulo** e apagar. O que você apaga vai pra **lixeira** (link no rodapé), com *Undo* na hora e *Restore* depois. **Depois de 15 dias na lixeira o arquivo some sozinho.**
 
 `Ctrl + F` (ou `⌘ F` no Mac) e `/` focam a busca do 911 em vez da busca do navegador. No computador, dá pra arrastar arquivos pra janela.
+
+### 📚 Estantes (Documents)
+
+Estante não é pasta: não tem "entrar" nela. Todas aparecem empilhadas na mesma página, como as prateleiras de uma estante, e o que não está em nenhuma fica em **Unsorted**.
+
+| | |
+|---|---|
+| **+ New shelf** | cria uma estante. No `⋯` dela dá pra renomear ou apagar |
+| **apagar estante** | os arquivos dela voltam pro Unsorted, **nada é apagado** |
+| **arrastar** | arrasta um documento (ou todos os marcados) pra cima de uma estante. Arrastar arquivo do computador direto numa estante envia pra ela |
+| **rótulo** | um nome curto que aparece **no lugar** do nome comprido do arquivo, sem renomear. A busca acha pelos dois |
+| **seta da estante** | recolhe/abre a estante (o navegador lembra) |
+
+Seleção, no computador:
+
+| Atalho | Faz |
+|---|---|
+| `Ctrl` + clique (`⌘` no Mac) | marca/desmarca. Com algo marcado, clique simples também marca |
+| `Shift` + clique | marca do último até este |
+| `Ctrl + A` | marca tudo que está na tela |
+| `Ctrl + C` / `Ctrl + X` | copia / recorta os marcados |
+| `Ctrl + V` | cola na estante em que você clicou por último (ou use o botão **Paste** que aparece em cada estante) |
+| `F2` | renomeia (um arquivo) |
+| `Delete` | manda os marcados pra lixeira |
+| `Esc` | desmarca |
+| botão direito | menu com abrir, mover, copiar, rótulo, renomear e apagar |
+
+No celular, o botão **Select** liga o modo seleção (o toque marca em vez de abrir), e a barra que aparece embaixo tem mover, copiar, rótulo, renomear e apagar.
+
+Copiar cria uma cópia de verdade do arquivo (nome repetido vira `nome (2).pdf`). Recortar e colar move. Por baixo dos panos cada estante é uma pasta dentro de `data/Documents/`, então pelo terminal tudo continua organizado.
 
 ### 📄 Editor de PDF
 
@@ -78,9 +108,10 @@ Os downloads rodam um de cada vez (o servidor tem 1 vCPU), com limite de 2 GB e 
 │   ├── fonts/          # Archivo e JetBrains Mono (as do design, licença OFL), servidas daqui
 │   └── vendor/         # PDF.js 6.4 (Apache-2.0, build "legacy", roda em iPhone mais antigo) e pdf-lib 1.17 (MIT)
 ├── data/               # os arquivos (volume, FORA do git)
-│   ├── Energy/         # cada item baixado por link tem um ".<nome>.json" escondido com a origem
-│   ├── Documents/
-│   ├── .lixeira/       # o que foi apagado + um .json com a origem de cada item
+│   ├── Energy/
+│   ├── Documents/      # cada estante é uma pasta aqui dentro
+│   │                   # (em qualquer lugar, um ".<nome>.json" escondido guarda a origem e o rótulo do arquivo)
+│   ├── .lixeira/       # o que foi apagado + um .json com a origem de cada item (some depois de 15 dias)
 │   ├── .thumbs/        # miniaturas de imagem geradas sob demanda
 │   └── .youtube-cookies.txt   # (opcional) ver acima
 ├── Dockerfile          # uv + python 3.13 alpine + ffmpeg + deno
@@ -108,13 +139,13 @@ Os downloads rodam um de cada vez (o servidor tem 1 vCPU), com limite de 2 GB e 
 | Rota | Faz |
 |---|---|
 | `GET/POST /login`, `POST /logout` | sessão |
-| `GET /api/list?path=Energy` | conteúdo de uma pasta (`src` = de onde veio, se foi por link) |
+| `GET /api/list?path=Energy` | conteúdo de uma pasta (`src` = de onde veio, `label` = rótulo). `deep=1` traz o conteúdo das estantes junto |
 | `GET /api/stats` | espaço usado, livre e itens na lixeira |
 | `PUT /api/upload?path=` | corpo cru = arquivo; `X-Mtime` opcional; `replace=1` manda a versão anterior pra lixeira |
-| `POST /api/fs` | `{"action": "mv" \| "rm", "path": "...", "to": "..."}` (`rm` manda pra lixeira e devolve o `id`) |
+| `POST /api/fs` | `{"action": ..., "path": "...", "to": "..."}` com `mkdir` (estante nova), `mv` (`"unique": true` evita conflito de nome), `cp`, `label` (`"label": "..."`, vazio tira), `unshelve` (apaga a estante e devolve os arquivos) e `rm` (lixeira, devolve o `id`) |
 | `POST /api/fetch` | `{"url": "..."}`: salva por link em Energy, em segundo plano |
 | `GET /api/jobs`, `POST /api/jobs/dismiss` | downloads por link (estado, progresso, erro) |
-| `GET /api/trash` / `POST /api/trash` | lista; `{"action": "restore" \| "purge" \| "empty", "id": "..."}` |
+| `GET /api/trash` / `POST /api/trash` | lista (com `expires`); `{"action": "restore" \| "purge" \| "empty", "id": "..."}`. Restaurar um arquivo cuja estante já foi apagada manda ele pro Unsorted |
 | `GET /raw/<caminho>` | o arquivo (`?dl=1` força download) |
 | `GET /thumb/<caminho>` | miniatura WebP de imagem (até 960 px) |
 

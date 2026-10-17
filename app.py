@@ -110,7 +110,7 @@ def size(p: Path) -> int:
     return sum((r / f).stat().st_size for r, _, fs in walk(p) for f in fs)
 
 
-# de onde veio cada arquivo baixado por link: um ".<nome>.json" escondido do lado dele
+# o que não cabe no nome do arquivo (de onde veio, o rótulo) fica num ".<nome>.json" escondido do lado dele
 def side(p: Path) -> Path:
     return p.with_name(f".{p.name}.json")
 
@@ -122,6 +122,26 @@ def read_side(p: Path) -> dict:
         return {}
 
 
+def write_side(p: Path, **changes):
+    # None apaga a chave; sem chave nenhuma, o .json some
+    meta = read_side(p)
+    for k, v in changes.items():
+        if v is None:
+            meta.pop(k, None)
+        else:
+            meta[k] = v
+    if meta:
+        side(p).write_text(json.dumps(meta))
+    else:
+        side(p).unlink(missing_ok=True)
+
+
+def move(p: Path, to: Path):
+    p.rename(to)
+    if side(p).exists():
+        side(p).rename(side(to))
+
+
 def entry(p: Path) -> dict:
     st = p.stat()
     # "added" é o ctime: muda quando o arquivo chega aqui, mesmo com a data original preservada no mtime
@@ -130,8 +150,10 @@ def entry(p: Path) -> dict:
         e["n"] = sum(1 for c in p.iterdir() if not c.name.startswith("."))
     else:
         e["size"] = st.st_size
-        if src := read_side(p).get("src"):
-            e["src"] = src
+        meta = read_side(p)
+        for k in ("src", "label"):
+            if meta.get(k):
+                e[k] = meta[k]
     return e
 
 
@@ -182,11 +204,20 @@ def logout():
 
 
 @app.get("/api/list")
-def list_dir(path: str = ""):
+def list_dir(path: str = "", deep: bool = False):
+    # deep=1: cada pasta já vem com os arquivos dela (as estantes de Documents numa chamada só)
     p = safe(path, root_ok=True)
     if not p.is_dir():
         raise HTTPException(404, "folder not found")
-    return [entry(c) for c in p.iterdir() if not c.name.startswith(".")]
+    out = []
+    for c in p.iterdir():
+        if c.name.startswith("."):
+            continue
+        e = entry(c)
+        if deep and e["dir"]:
+            e["items"] = [entry(x) for x in c.iterdir() if x.is_file() and not x.name.startswith(".")]
+        out.append(e)
+    return out
 
 
 @app.get("/api/stats")
@@ -221,19 +252,60 @@ async def upload(path: str, request: Request, replace: bool = False):
     return entry(dest)
 
 
+def shelf_name(name) -> str:
+    name = str(name or "").strip()
+    if not name or "/" in name or "\\" in name or name.startswith(".") or len(name) > 60:
+        raise HTTPException(400, "Shelf names can't be empty, start with a dot or contain /.")
+    return name
+
+
 @app.post("/api/fs")
 def fs(body: dict):
     match body["action"]:
+        case "mkdir":  # estante nova: só um nível, direto dentro de Documents
+            p = safe(body["path"])
+            shelf_name(p.name)
+            if p.parent != DOCS:
+                raise HTTPException(400, "shelves only live inside Documents")
+            if p.exists():
+                raise HTTPException(409, "there's already a shelf with that name")
+            p.mkdir(parents=True)
         case "mv":
+            # unique=1 (arrastar vários pra uma estante): nome repetido vira "nome (2)" em vez de erro
             p, to = existing(body["path"]), safe(body["to"])
+            if p.is_dir():
+                shelf_name(to.name)
+            if body.get("unique"):
+                to = unique(to)
             if to.exists():
                 raise HTTPException(409, "a file with that name already exists")
             if to.is_relative_to(p):
                 raise HTTPException(400, "can't move a folder into itself")
             to.parent.mkdir(parents=True, exist_ok=True)
-            p.rename(to)
+            move(p, to)
+            return {"path": rel(to)}
+        case "cp":
+            p = existing(body["path"])
+            if not p.is_file():
+                raise HTTPException(400, "only files can be copied")
+            to = unique(safe(body["to"]))
+            to.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(p, to)
             if side(p).exists():
-                side(p).rename(side(to))
+                shutil.copy2(side(p), side(to))
+            return {"path": rel(to)}
+        case "label":  # o nome que aparece no lugar do nome do arquivo; vazio tira o rótulo
+            p = existing(body["path"])
+            write_side(p, label=str(body.get("label") or "").strip()[:120] or None)
+        case "unshelve":
+            # apaga a estante mas não os arquivos: eles voltam pra fora dela (Unsorted)
+            p = existing(body["path"])
+            if not p.is_dir():
+                raise HTTPException(400, "not a shelf")
+            for c in list(p.iterdir()):
+                if not c.name.startswith("."):
+                    move(c, unique(p.parent / c.name))
+            shutil.rmtree(p)  # só sobrou coisa escondida (.part de envio interrompido, .json órfão)
         case "rm":  # vai pra lixeira
             return {"id": to_trash(existing(body["path"]))}  # o id serve pro "desfazer"
         case _:
@@ -359,7 +431,7 @@ def run(job: dict):
         for f in files:
             dest = unique(ENERGY / f"{title_for(f, f.stem)}{f.suffix.lower()}")
             f.rename(dest)
-            side(dest).write_text(json.dumps({"src": job["source"], "url": job["url"]}))
+            write_side(dest, src=job["source"], url=job["url"])
             job["files"].append(rel(dest))
         job.update(state="done", progress=1)
     finally:
@@ -427,6 +499,8 @@ def purge(tid: str):
 @app.get("/api/trash")
 def trash_list():
     items = [{"id": j.stem, **json.loads(j.read_text())} for j in TRASH.glob("*.json")]
+    for i in items:
+        i["expires"] = i["when"] + TRASH_DAYS * 86400
     return sorted(items, key=lambda i: -i["when"])
 
 
@@ -435,7 +509,10 @@ def trash_action(body: dict):
     match body["action"]:
         case "restore":
             item, meta = trashed(body["id"])
-            dest = unique(safe(meta["path"]))
+            dest = safe(meta["path"])
+            if not dest.parent.exists():  # a estante dele foi apagada: volta pra fora das estantes
+                dest = DATA / Path(meta["path"]).parts[0] / dest.name
+            dest = unique(dest)
             dest.parent.mkdir(parents=True, exist_ok=True)
             item.rename(dest)
             if "side" in meta:
@@ -449,6 +526,25 @@ def trash_action(body: dict):
                 purge(j.stem)
         case _:
             raise HTTPException(400, "unknown action")
+
+
+# o que está na lixeira há mais de 15 dias some sozinho (confere ao subir e depois de hora em hora)
+TRASH_DAYS = 15
+
+
+def janitor():
+    while True:
+        limit = time.time() - TRASH_DAYS * 86400
+        for j in TRASH.glob("*.json"):
+            try:
+                if json.loads(j.read_text())["when"] < limit:
+                    purge(j.stem)
+            except (OSError, ValueError, KeyError, HTTPException):
+                pass  # sumiu no meio do caminho (a pessoa esvaziou a lixeira ao mesmo tempo)
+        time.sleep(3600)
+
+
+threading.Thread(target=janitor, daemon=True).start()
 
 
 # qualquer outro caminho é a mesma página; a aba aberta fica no #hash
