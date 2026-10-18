@@ -213,7 +213,8 @@ const where = shelf => shelf ? `“${shelf}”` : "Unsorted"
 function renderDocs(q) {
   const hit = e => !q || fold(e.name).includes(q) || fold(e.label || "").includes(q)
   const groups = ["", ...shelves].map(name => ({ name, items: items.docs.filter(e => e.shelf == name && hit(e)).sort((a, b) => byName(nameOf(a), nameOf(b))) }))
-  shown = groups.flatMap(g => g.items)
+  // shown = a ordem da tela (esquerda pra direita, estante por estante); o que está numa estante recolhida fica de fora
+  shown = groups.flatMap(g => shelves.length && !q && collapsed.has(g.name) ? [] : g.items)
   const bar = `<div class="docbar">
     <button class="chip" id="newShelf">${I.plus}New shelf</button>
     <button class="chip${selecting ? " on" : ""}" id="selMode">${I.check}Select</button>
@@ -265,6 +266,7 @@ function docsClick(ev) {
     // Shift: marca do último clicado até este, na ordem da tela
     const a = shown.findIndex(x => x.path == lastPick), b = shown.indexOf(e)
     if (a >= 0) for (let i = Math.min(a, b); i <= Math.max(a, b); i++) sel.add(shown[i].path)
+    else { sel.add(e.path); lastPick = e.path }  // a âncora sumiu (estante recolhida): marca só este
     return updateSel()
   }
   // Ctrl/⌘ (ou o modo seleção, ou já ter algo marcado): marca/desmarca em vez de abrir
@@ -284,6 +286,7 @@ function updateSel() {
 
 function clearSel() {
   sel.clear()
+  lastPick = null
   selecting = false
   render()
 }
@@ -634,6 +637,7 @@ $("#trashBtn").onclick = showTrash
 // ---------- visualizador (e editor de PDF) ----------
 let vlist = [], vi = 0, editor = null
 let viewing = 0  // muda a cada arquivo aberto/fechado; um PDF que termina de carregar atrasado se descarta
+let loading = null  // download do PDF aberto; trocar de arquivo ou fechar cancela
 
 function openViewer(e) {
   vlist = shown
@@ -643,6 +647,7 @@ function openViewer(e) {
 
 // sair de um PDF com alteração não salva pergunta antes
 async function leaveEditor() {
+  if (stillSaving()) return false
   if (editor?.dirty() && !await confirmBox("Discard changes?", "Your edits to this PDF aren't saved.", "Discard")) return false
   editor?.destroy()
   editor = null
@@ -651,13 +656,14 @@ async function leaveEditor() {
 
 async function showFile() {
   if (!await leaveEditor()) return
+  loading?.abort()
   const token = ++viewing
   const e = vlist[vi], k = kind(e), src = raw(e), body = $("#vbody")
   viewerHead(e)
   $("#vdl").href = src + "?dl=1"
-  // no PDF as setas ficariam em cima da página que você está editando
-  $("#vprev").disabled = vi == 0 || k == "pdf"
-  $("#vnext").disabled = vi == vlist.length - 1 || k == "pdf"
+  $("#vprev").disabled = vi == 0
+  $("#vnext").disabled = vi == vlist.length - 1
+  $("#viewer").classList.toggle("is-pdf", k == "pdf")
   $("#tools").hidden = true
   body.className = ""
   body.innerHTML = ""
@@ -680,7 +686,13 @@ async function showFile() {
     body.className = "pdf"
     const { openPdf } = await import("/static/editor.js")
     const alive = () => token == viewing
-    const ed = alive() && await openPdf(body, $("#tools"), { url: src, save: bytes => savePdf(e, bytes), toast, alive })
+    if (!alive()) return
+    loading = new AbortController()
+    const list = vlist, i = vi
+    const ed = await openPdf(body, $("#tools"), {
+      url: src, save: bytes => savePdf(e, bytes, token, list, i), toast, alive, signal: loading.signal,
+      ready: h => { if (alive()) editor = h },  // já dá pra editar enquanto as páginas carregam
+    })
     if (ed && alive()) editor = ed
     else ed?.destroy()
   }
@@ -690,55 +702,72 @@ async function showFile() {
 
 function viewerHead(e) {
   $("#vname").textContent = nameOf(e)
-  $("#vmeta").textContent = (e.label ? e.name + " · " : "") + `${fmtSize(e.size)} · ${fmtDate(e.mtime)}` + (e.src ? ` · ${e.src}` : "")
+  $("#vmeta").textContent = (vlist.length > 1 ? `${vi + 1}/${vlist.length} · ` : "") + (e.label ? e.name + " · " : "")
+    + `${fmtSize(e.size)} · ${fmtDate(e.mtime)}` + (e.src ? ` · ${e.src}` : "")
 }
 
-async function savePdf(e, bytes) {
+// list/i: a posição do PDF guardada quando ele foi aberto (não a de agora, que pode ser outro arquivo)
+async function savePdf(e, bytes, token, list, i) {
   const r = await api(`/api/upload?path=${encodeURIComponent(e.path)}&replace=1`, {
     method: "PUT", body: new Blob([bytes], { type: "application/pdf" }), headers: { "X-Mtime": Date.now() / 1000 },
   })
   const fresh = await r.json()
-  toast("Saved. The previous version is in the trash.")
-  editor?.destroy()
-  editor = null
-  vlist[vi] = { ...fresh, shelf: e.shelf }
+  list[i] = { ...fresh, shelf: e.shelf }
+  const here = token == viewing  // o visualizador ainda está neste PDF
+  if (here) { editor?.destroy(); editor = null }
   await load()
   loadStats()
-  showFile()
+  toast("Saved. The previous version is in the trash.")
+  if (here && token == viewing) showFile()
 }
 
 async function closeViewer() {
   if (!await leaveEditor()) return
+  loading?.abort()
   viewing++
   $("#viewer").hidden = true
   $("#vbody").innerHTML = ""  // para vídeo/áudio
   $("#tools").hidden = true
   document.body.classList.remove("noscroll")
 }
-const step = d => { if (vlist[vi + d]) { vi += d; showFile() } }
+// só troca de arquivo depois de confirmar o descarte das edições do PDF: se a pessoa cancelar,
+// vi continua apontando pro PDF que está na tela (senão renomear/apagar agiria no arquivo errado)
+async function step(d) {
+  if (!vlist[vi + d] || !await leaveEditor()) return
+  vi += d
+  showFile()
+}
 $("#vclose").onclick = closeViewer
 $("#vprev").onclick = () => step(-1)
 $("#vnext").onclick = () => step(1)
 
+// guardam em qual arquivo estavam antes de esperar o servidor: se a pessoa passou pro próximo
+// nesse meio tempo, a mudança vai pro arquivo certo e a tela só é atualizada se ainda for ele
+const stillSaving = () => editor?.saving?.() && (toast("Still saving the PDF. One moment…"), true)
+const showing = (list, i) => vlist === list && vi === i && !$("#viewer").hidden
+
 $("#vren").onclick = async () => {
-  const e = vlist[vi]
+  const list = vlist, i = vi, e = list[i]
+  if (stillSaving()) return
   if (editor?.dirty()) return toast("Save or discard your PDF edits first.", { err: true })
   const to = await renameItem(e)
   if (!to) return
-  vlist[vi] = { ...e, name: base(to), path: to }
-  showFile()
+  list[i] = { ...list[i], name: base(to), path: to }
+  if (showing(list, i)) showFile()
 }
 
 $("#vlab").onclick = async () => {
-  const e = vlist[vi]
+  const list = vlist, i = vi, e = list[i]
+  if (stillSaving()) return
   const v = await labelItem(e)
   if (v == null) return
-  vlist[vi] = { ...e, label: v || undefined }
-  viewerHead(vlist[vi])
+  list[i] = { ...list[i], label: v || undefined }
+  if (showing(list, i)) viewerHead(list[i])
 }
 
 $("#vdel").onclick = async () => {
   const e = vlist[vi]
+  if (stillSaving()) return  // senão o salvamento em andamento traria o arquivo apagado de volta
   if (!await confirmBox("Delete this file?", e.name, "Delete")) return
   if (editor) { editor.destroy(); editor = null }
   const { id } = await post("/api/fs", { action: "rm", path: e.path })
@@ -946,8 +975,9 @@ addEventListener("keydown", ev => {
   if ($("#dlg").open) return
   const typing = ev.target.matches("input, textarea, select, [contenteditable]")
   if (!$("#viewer").hidden) {
-    if (ev.key == "Escape" && !$(".padwrap")) closeViewer()
-    else if (typing || editor || ev.target.matches("video, audio")) return
+    // fecha depois do evento: se abrir o "Discard changes?" aqui dentro, o próprio Esc já fecharia o diálogo
+    if (ev.key == "Escape" && !$(".padwrap")) { ev.preventDefault(); setTimeout(closeViewer) }
+    else if (typing || $(".padwrap") || ev.target.matches("video, audio") || ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return
     else if (ev.key == "ArrowLeft") step(-1)
     else if (ev.key == "ArrowRight") step(1)
     return

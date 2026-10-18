@@ -243,10 +243,14 @@ async def upload(path: str, request: Request, replace: bool = False):
                 f.write(chunk)
         if mtime := request.headers.get("x-mtime"):  # mantém a data original do arquivo
             os.utime(tmp, (float(mtime), float(mtime)))
+        keep = {}
         if replace and dest.is_file():
+            keep = read_side(dest)  # rótulo e origem continuam valendo pra versão nova
             to_trash(dest)
         dest = unique(dest)
         tmp.rename(dest)
+        if keep:
+            write_side(dest, **keep)
     finally:
         tmp.unlink(missing_ok=True)
     return entry(dest)
@@ -319,6 +323,9 @@ def raw(path: str, dl: bool = False):
         raise HTTPException(404, "not a file")
     r = FileResponse(p, filename=p.name, content_disposition_type="attachment" if dl else "inline")
     r.headers["X-Content-Type-Options"] = "nosniff"
+    # o mesmo caminho pode ganhar conteúdo novo (PDF salvo, arquivo apagado e enviado de novo):
+    # o navegador sempre confere com o servidor (ETag) em vez de reaproveitar uma cópia velha
+    r.headers["Cache-Control"] = "private, no-cache"
     # um .html/.svg enviado abre isolado, sem rodar script com a sua sessão
     # (o PDF fica de fora porque o leitor de PDF do Chrome não abre em sandbox)
     if r.media_type != "application/pdf":

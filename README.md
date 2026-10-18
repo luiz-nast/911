@@ -54,6 +54,7 @@ Seleção, no computador:
 | `Delete` | manda os marcados pra lixeira |
 | `Esc` | desmarca |
 | botão direito | menu com abrir, mover, copiar, rótulo, renomear e apagar |
+| `←` / `→` (com um arquivo aberto) | anterior / próximo, na ordem da tela: da esquerda pra direita, estante por estante (pula estante recolhida). As setas na tela fazem o mesmo, inclusive no PDF |
 
 No celular, o botão **Select** liga o modo seleção (o toque marca em vez de abrir), e a barra que aparece embaixo tem mover, copiar, rótulo, renomear e apagar.
 
@@ -69,7 +70,7 @@ Abrir um PDF em Documents já abre o editor:
 | **Text** | clica na página e digita. Arrasta pela alça, muda o tamanho no seletor de pt |
 | **Sign** | desenha a assinatura com o dedo ou o mouse. Ela fica guardada no navegador pra usar de novo |
 | **White-out** | arrasta pra cobrir uma área de branco. Dá pra escrever por cima |
-| **Save** | grava no próprio arquivo. A versão anterior vai pra lixeira |
+| **Save** | grava no próprio arquivo (mantendo o rótulo). A versão anterior vai pra lixeira. Enquanto salva, o editor fica travado e não dá pra sair nem apagar |
 
 Limites:
 - **O White-out só cobre visualmente.** O texto que estava embaixo continua no arquivo e pode ser selecionado ou copiado. **Não use pra esconder dado sigiloso.**

@@ -27,14 +27,18 @@ function loadPdfLib() {
 }
 
 // alive(): o visualizador ainda está neste arquivo? (a pessoa pode ter trocado enquanto carregava)
-export async function openPdf(body, tools, { url, save, toast, alive }) {
-  const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer())
-  const task = pdfjs.getDocument({ data: bytes.slice(), standardFontDataUrl: V + "standard_fonts/", wasmUrl: V + "wasm/", isEvalSupported: false })
-  let doc
+// signal cancela o download quando ela passa pro próximo; ready(editor) entrega o editor antes de
+// terminar de carregar as páginas, pra quem troca de arquivo já ser perguntado sobre o que editou
+export async function openPdf(body, tools, { url, save, toast, alive, signal, ready }) {
+  let bytes, task, doc
   try {
+    // no-cache: depois de salvar, a mesma URL tem que trazer o PDF novo, não o que o navegador guardou
+    bytes = new Uint8Array(await (await fetch(url, { signal, cache: "no-cache" })).arrayBuffer())
+    if (!alive()) return null
+    task = pdfjs.getDocument({ data: bytes.slice(), standardFontDataUrl: V + "standard_fonts/", wasmUrl: V + "wasm/", isEvalSupported: false })
     doc = await task.promise
   } catch (err) {
-    if (!alive()) return null
+    if (!alive()) { task?.destroy(); return null }
     const locked = err?.name == "PasswordException"
     body.className = ""
     body.innerHTML = `<div class="fallback"><p>${locked ? "This PDF is password-protected." : "Couldn't open this PDF."}</p>
@@ -46,7 +50,8 @@ export async function openPdf(body, tools, { url, save, toast, alive }) {
   const pages = []
   const changed = new Map()  // campo do formulário -> valor novo
   const items = []           // texto, assinatura e corretivo acrescentados
-  let tool = "select", selected = null, textSize = 12
+  let tool = "select", selected = null, textSize = 12, saving = false, dead = false
+  let io  // criado depois das páginas; destroy() pode chegar antes disso
 
   // ---------- barra de ferramentas ----------
   tools.innerHTML = `<div class="tbar">
@@ -64,7 +69,7 @@ export async function openPdf(body, tools, { url, save, toast, alive }) {
   const dropBar = () => { if (bar.isConnected) { tools.innerHTML = ""; tools.hidden = true } }
   const saveBtn = tools.querySelector("#tsave"), sizeSel = tools.querySelector("#tsize")
   const isDirty = () => changed.size > 0 || items.some(it => it.type != "text" || it.text.trim())
-  const touch = () => { saveBtn.disabled = !isDirty() }
+  const touch = () => { saveBtn.disabled = saving || !isDirty() }
 
   function setTool(t) {
     tool = t
@@ -84,6 +89,10 @@ export async function openPdf(body, tools, { url, save, toast, alive }) {
     if (selected?.type == "text") { selected.size = textSize; place(selected) }
   }
   saveBtn.onclick = async () => {
+    if (saving) return
+    saving = true
+    // enquanto salva, nada fica editável: o que mudasse agora não iria pro arquivo
+    wrap.inert = bar.inert = true
     saveBtn.disabled = true
     saveBtn.textContent = "Saving…"
     try {
@@ -94,17 +103,42 @@ export async function openPdf(body, tools, { url, save, toast, alive }) {
       toast(msg, { err: true })
       saveBtn.textContent = "Save"
       touch()
+    } finally {
+      saving = false
+      wrap.inert = bar.inert = false
+      touch()
     }
   }
+
+  const editor = {
+    dirty: isDirty,
+    saving: () => saving,
+    destroy() {
+      dead = true
+      io?.disconnect()
+      removeEventListener("keydown", keydown)
+      document.querySelector(".padwrap")?.remove()
+      dropBar()
+      task.destroy()
+    },
+  }
+  ready?.(editor)
 
   // ---------- páginas ----------
   const wrap = document.createElement("div")
   wrap.className = "pages"
   body.append(wrap)
-  const width = Math.min(body.clientWidth - 32, 960)
+  // no computador a página deixa espaço dos lados pras setas de anterior/próximo
+  const width = Math.min(body.clientWidth - (innerWidth >= 760 ? 144 : 32), 960)
   for (let n = 1; n <= doc.numPages; n++) {
-    const page = await doc.getPage(n)
-    if (!alive()) { dropBar(); task.destroy(); return null }
+    let page
+    try {
+      page = await doc.getPage(n)
+    } catch (err) {
+      if (dead || !alive()) return null  // destruído no meio do carregamento (passou pro próximo arquivo)
+      throw err
+    }
+    if (dead || !alive()) { dropBar(); task.destroy(); return null }
     const unit = page.getViewport({ scale: 1 })
     const scale = width / unit.width
     const vp = page.getViewport({ scale })
@@ -120,7 +154,7 @@ export async function openPdf(body, tools, { url, save, toast, alive }) {
   }
 
   // desenha só as páginas perto da tela e solta as que ficaram longe (PDF grande no celular)
-  const io = new IntersectionObserver(list => {
+  io = new IntersectionObserver(list => {
     for (const x of list) {
       const P = pages.find(p => p.el == x.target)
       if (x.isIntersecting) draw(P)
@@ -148,7 +182,9 @@ export async function openPdf(body, tools, { url, save, toast, alive }) {
   async function fields(P) {
     if (P.fields) return
     P.fields = true
-    for (const a of await P.page.getAnnotations({ intent: "display" })) {
+    let annots
+    try { annots = await P.page.getAnnotations({ intent: "display" }) } catch { return }  // editor já fechado
+    for (const a of annots) {
       if (a.subtype != "Widget" || !a.fieldName || a.hidden) continue
       const [x1, y1] = P.vp.convertToViewportPoint(a.rect[0], a.rect[1])
       const [x2, y2] = P.vp.convertToViewportPoint(a.rect[2], a.rect[3])
@@ -302,7 +338,8 @@ export async function openPdf(body, tools, { url, save, toast, alive }) {
   }
 
   function keydown(ev) {
-    if (!selected || ev.target.closest?.("[contenteditable], input, textarea, select")) return
+    // com um diálogo aberto ("Discard changes?") ou a assinatura sendo desenhada, Delete não apaga nada por trás
+    if (!selected || document.querySelector("dialog[open], .padwrap") || ev.target.closest?.("[contenteditable], input, textarea, select")) return
     if (ev.key == "Delete" || ev.key == "Backspace") { ev.preventDefault(); remove(selected) }
   }
   addEventListener("keydown", keydown)
@@ -406,16 +443,7 @@ export async function openPdf(body, tools, { url, save, toast, alive }) {
     return pdf.save()
   }
 
-  return {
-    dirty: isDirty,
-    destroy() {
-      io.disconnect()
-      removeEventListener("keydown", keydown)
-      document.querySelector(".padwrap")?.remove()
-      dropBar()
-      task.destroy()
-    },
-  }
+  return editor
 }
 
 // recorta a assinatura no tamanho do traço, com fundo transparente
