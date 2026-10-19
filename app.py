@@ -25,7 +25,10 @@ TRASH = DATA / ".lixeira"
 THUMBS = DATA / ".thumbs"
 ENERGY = DATA / "Energy"
 DOCS = DATA / "Documents"
-# cookies.txt de uma conta do Google: sem ele o YouTube barra o IP do servidor ("not a bot")
+# o YouTube barra o IP da Hostinger ("not a bot", IPv4 e IPv6); saindo pela rede da Cloudflare (WARP) ele libera.
+# o compose sobe o serviço "warp" e passa YOUTUBE_PROXY=socks5h://warp:1080
+YOUTUBE_PROXY = os.environ.get("YOUTUBE_PROXY", "")
+# cookies.txt de uma conta do Google: plano B, se um dia o YouTube barrar o WARP também
 COOKIES = DATA / ".youtube-cookies.txt"
 for d in (TRASH, THUMBS, ENERGY, DOCS):
     d.mkdir(parents=True, exist_ok=True)
@@ -396,7 +399,11 @@ def title_for(f: Path, fallback: str) -> str:
 def friendly(out: list[str]) -> str:
     text = "\n".join(out)
     if "not a bot" in text or "Sign in to confirm" in text:
-        return "YouTube blocked the server. It needs cookies from a Google account (see the README)."
+        if YOUTUBE_PROXY:
+            return "YouTube blocked the download even through WARP. Try again in a few minutes; if it keeps happening, add cookies (see the README)."
+        return "YouTube blocked the server. It needs the WARP proxy or cookies from a Google account (see the README)."
+    if YOUTUBE_PROXY and re.search(r"proxy|socks|Connection refused|Name does not resolve|Name or service not known|Temporary failure in name resolution", text, re.I):
+        return "Couldn't reach the WARP proxy. Restart it with: docker compose up -d"
     if "No video formats" in text or not out:
         return "Nothing to download at this link."
     errors = [line.removeprefix("ERROR:").strip() for line in out if line.startswith("ERROR")]
@@ -416,8 +423,10 @@ def run(job: dict):
                    "-f", "bv*[vcodec^=avc1]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b", "--merge-output-format", "mp4",
                    "--max-filesize", "2G", "--write-info-json", "-o", "%(id)s.%(ext)s", "-P", str(tmp),
                    "--newline", "--progress-template", "download:%(progress._percent_str)s"]
-            if COOKIES.exists():
-                cmd += ["--cookies", str(COOKIES)]
+            if YOUTUBE_PROXY:
+                cmd += ["--proxy", YOUTUBE_PROXY]
+            if COOKIES.exists():  # com conta, vai mais devagar pra ela não ser marcada como robô
+                cmd += ["--cookies", str(COOKIES), "--sleep-requests", "1"]
             cmd += ["--", job["url"]]
         job["state"] = "running"
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

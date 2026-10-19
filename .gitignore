@@ -3,3 +3,5 @@ __pycache__/
 .venv/
 # vídeos e documentos não vão pro git
 data/
+# registro do Cloudflare WARP (gerado na primeira vez que sobe)
+warp/

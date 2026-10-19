@@ -23,7 +23,7 @@ App web de **um usuário só**, protegido por senha, seguindo o design do canvas
 | Aba | O que faz |
 |---|---|
 | **Energy** | feed com o mais recente em cima. O vídeo toca ali mesmo no feed. O **+** salva por **link do Pinterest** (foto ou vídeo), **link do YouTube Shorts** ou **arquivo do aparelho**. Colou o link, ele escolhe a opção sozinho |
-| **Documents** | organizado em **estantes** (abaixo). O **+** envia o arquivo direto, com o nome original, pra estante que você escolher. PDF abre no **editor** |
+| **Documents** | organizado em **estantes** (abaixo). O **+** envia qualquer arquivo (PDF, foto, TXT, planilha…) com o nome original, pra estante que você escolher. PDF abre no **editor**, TXT abre como texto |
 
 Em qualquer arquivo dá pra baixar, renomear, pôr um **rótulo** e apagar. O que você apaga vai pra **lixeira** (link no rodapé), com *Undo* na hora e *Restore* depois. **Depois de 15 dias na lixeira o arquivo some sozinho.**
 
@@ -83,15 +83,21 @@ Limites:
 
 | Site | Funciona? | Como |
 |---|---|---|
-| **Pinterest** | ✅ foto e vídeo | `gallery-dl` |
-| **YouTube / Shorts** | ⚠️ **precisa de cookies** | `yt-dlp` + ffmpeg + Deno |
+| **Pinterest** | ✅ foto e vídeo | `gallery-dl`, saindo direto do servidor |
+| **YouTube / Shorts** | ✅ vídeo | `yt-dlp` + ffmpeg + Deno, saindo pela **Cloudflare WARP** |
 
-O YouTube barra o IP do servidor ("Sign in to confirm you're not a bot"). Testado em 13/10/2026 com 7 clientes diferentes do yt-dlp: todos bloqueados. Pra liberar, o yt-dlp precisa dos cookies de uma conta do Google:
+**Por que o WARP:** o YouTube barra o IP da Hostinger ("Sign in to confirm you're not a bot"). Testado em 19/10/2026: IPv4 e IPv6 do servidor bloqueados em todos os clientes do yt-dlp, e um provedor de PO token (bgutil) também não adianta, porque o bloqueio é pelo IP, antes de qualquer token. Saindo pela rede da Cloudflare, o mesmo Short baixa normal.
+
+O compose sobe um segundo serviço, `warp` (imagem `caomingjun/warp`, ~100 MB de RAM), que vira um proxy SOCKS5 só pro yt-dlp (`YOUTUBE_PROXY=socks5h://warp:1080`, dá pra trocar no `.env`). Ele não publica porta nenhuma: só o 911 enxerga. O registro do WARP fica em `warp/` (fora do git) e sobrevive aos reinícios. O Pinterest não passa por ele.
+
+Se a Cloudflare ou o YouTube mudarem e o WARP parar de passar, o card de erro avisa. Aí o plano B são **cookies** de uma conta do Google, que o yt-dlp usa junto com o WARP:
 
 1. Use uma **conta secundária**. O YouTube pode marcar como robô a conta usada assim.
 2. Numa **janela anônima**, entre no YouTube com essa conta e exporte os cookies em formato `cookies.txt` (Netscape), com uma extensão tipo *Get cookies.txt LOCALLY*.
 3. **Feche a janela anônima** sem sair da conta, senão o YouTube invalida os cookies.
-4. Salve o arquivo no servidor como `data/.youtube-cookies.txt` (pelo code-server mesmo). Não precisa reiniciar.
+4. Salve o arquivo no servidor como `data/.youtube-cookies.txt` (pelo code-server mesmo). Não precisa reiniciar. Com cookies, o yt-dlp espera 1 s entre requisições, pra conta não chamar atenção.
+
+Se o WARP for barrado de vez: `docker compose stop warp && rm -rf warp/* && docker compose up -d warp` pega um registro novo (o IP de saída é de um pool compartilhado da Cloudflare, então não é garantia).
 
 Os downloads rodam um de cada vez (o servidor tem 1 vCPU), com limite de 2 GB e 15 min cada. Só links do Pinterest e do YouTube são aceitos: o yt-dlp abriria qualquer URL, e daqui de dentro ele enxergaria o code-server e o Docker.
 
@@ -116,7 +122,8 @@ Os downloads rodam um de cada vez (o servidor tem 1 vCPU), com limite de 2 GB e 
 │   ├── .thumbs/        # miniaturas de imagem geradas sob demanda
 │   └── .youtube-cookies.txt   # (opcional) ver acima
 ├── Dockerfile          # uv + python 3.13 alpine + ffmpeg + deno
-├── compose.yaml        # publica só em 127.0.0.1:8084
+├── compose.yaml        # o app (só em 127.0.0.1:8084) + o proxy WARP pro YouTube
+├── warp/               # registro do Cloudflare WARP (gerado ao subir, fora do git)
 └── .env                # senha e segredo (fora do git; ver .env.example)
 ```
 
@@ -186,6 +193,7 @@ DNS: registro **A** `911` apontando para o IP do servidor. O Caddy não limita o
 - [ ] `curl -I http://127.0.0.1:8084/` responde `307` para `/login`
 - [ ] `https://911.premiumlts.com.br` abre com HTTPS válido e o login funciona
 - [ ] colar um link de pin do Pinterest em Energy salva o vídeo/foto
+- [ ] colar um link de YouTube Shorts salva o vídeo (`docker compose ps` mostra o `warp` como healthy)
 - [ ] abrir um PDF em Documents, escrever algo, salvar e reabrir
 
 ## 🔧 Manutenção
@@ -195,7 +203,7 @@ DNS: registro **A** `911` apontando para o IP do servidor. O Caddy não limita o
 | mudou código ou `static/` | `docker compose up -d --build` |
 | mudou o `.env` | `docker compose up -d` (**não** use `restart`: ele não relê o `.env`) |
 | logs | `docker compose logs -f` |
-| Pinterest/YouTube pararam de baixar | atualizar o yt-dlp e o gallery-dl (abaixo) |
+| Pinterest/YouTube pararam de baixar | atualizar o yt-dlp e o gallery-dl (abaixo); se o erro falar do WARP, `docker compose up -d` |
 | esvaziar miniaturas (são recriadas) | `rm -rf data/.thumbs/*` |
 | backup | copiar a pasta `data/` inteira (ela não vai pro git) |
 

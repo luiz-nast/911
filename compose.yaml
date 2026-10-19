@@ -4,4 +4,21 @@ services:
     ports: ["127.0.0.1:8084:8000"]
     volumes: ["./data:/app/data"]
     env_file: .env
+    environment:
+      # o YouTube barra o IP da Hostinger; pelo WARP (rede da Cloudflare) ele libera.
+      # socks5h: o DNS também sai pelo WARP. Dá pra trocar no .env (YOUTUBE_PROXY=...)
+      YOUTUBE_PROXY: ${YOUTUBE_PROXY:-socks5h://warp:1080}
+    depends_on: [warp]
+    restart: unless-stopped
+
+  # Cloudflare WARP como proxy SOCKS5, só pro yt-dlp. Sem porta publicada: só o app enxerga.
+  warp:
+    image: caomingjun/warp:2026.8.2110.0-2.12.0
+    cap_add: [NET_ADMIN]  # só dentro do container (o túnel dele), não no servidor
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: "0"
+      net.ipv4.conf.all.src_valid_mark: "1"
+    environment:
+      WARP_SLEEP: "2"
+    volumes: ["./warp:/var/lib/cloudflare-warp"]  # guarda o registro do WARP entre reinícios
     restart: unless-stopped

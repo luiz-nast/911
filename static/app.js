@@ -183,7 +183,8 @@ $("#list").addEventListener("click", ev => {
   if (media && kind(e) == "video") {
     // vídeo toca ali mesmo, no feed
     const v = media.querySelector("video")
-    if (!v || media.classList.contains("playing")) return
+    if (!v) return openViewer(e)  // o navegador não conseguiu carregar o vídeo aqui: o visualizador tenta (ou oferece baixar)
+    if (media.classList.contains("playing")) return
     if (!v.src) v.src = v.dataset.src
     media.classList.add("playing")
     v.controls = true
@@ -591,10 +592,11 @@ function uploadEnergy() {
 function uploadDocs() {
   const opts = ["", ...shelves].map(n => `<option value="${esc(n)}" ${n == activeShelf ? "selected" : ""}>${n ? esc(n) : "Unsorted"}</option>`).join("")
   openSheet("Upload document", `
-    <button class="pick big" id="pickDoc"><span class="bigicon">${I.upload}</span><b>Choose a file</b><small>PDF · JPG · PNG</small></button>
+    <button class="pick big" id="pickDoc"><span class="bigicon">${I.upload}</span><b>Choose a file</b><small>PDF · photo · TXT · any file</small></button>
     ${shelves.length ? `<label class="field pickshelf"><span>Shelf</span><select id="toShelf">${opts}</select></label>` : ""}
     <div class="note">Saved with its own file name.</div>`)
-  $("#pickDoc").onclick = () => choose("application/pdf,image/*", join(DOCS, $("#toShelf")?.value))
+  // sem filtro de tipo: documento pode ser qualquer coisa (txt, docx, planilha...)
+  $("#pickDoc").onclick = () => choose("", join(DOCS, $("#toShelf")?.value))
 }
 
 function choose(accept, dir) {
